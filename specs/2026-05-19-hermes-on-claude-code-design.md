@@ -1,9 +1,16 @@
 # Hermes on Claude Code — design spec
 
+> ⚠️ **SUPERSEDED — 2026-05-19.** After self-critique and reconsideration, this aggressive "Claude Code is the brain, drop multi-provider" variant was retracted in favor of the predecessor's more conservative shape. Multi-provider is core to Nous Research's identity; deleting it is a brand strangle, not a refactor. The active design is `specs/2026-05-18-convert-hermes-to-claude-code-sdk.md` — Claude Agent SDK is **one transport among many**, Hermes' unique surfaces are exposed as MCP servers consumable by any SDK-based agent (including a vanilla `claude` session), and `run_agent.py` / `cli.py` / `ui-tui/` / `acp_adapter/` / non-Anthropic providers all STAY. This file is preserved for historical reference; do not use it as the source of truth.
+>
+> The plugin scaffold work landed on branch `feat/claude-code-plugin-p0` (commits `ccc91f8c1`..`404752751`, T1–T11) maps cleanly to the predecessor spec's **Phase 2** ("mirror Hermes tools as MCP servers"). Nothing is rewound. The new implementation plan is at `plans/2026-05-19-hermes-on-claude-code-P1-sdk-transport.md`.
+
+---
+
 **Ticket:** none
-**Status:** draft (awaiting user review)
+**Status:** SUPERSEDED — see banner above
 **Created:** 2026-05-19
-**Supersedes:** `specs/2026-05-18-convert-hermes-to-claude-code-sdk.md` (the predecessor proposed a conservative "SDK as one more transport, keep multi-provider" port; this spec is more aggressive — see §1)
+**Superseded:** 2026-05-19 (same day) — see top of file
+**Originally claimed to supersede:** `specs/2026-05-18-convert-hermes-to-claude-code-sdk.md` — that claim is retracted; the 2026-05-18 spec remains the active design.
 **Inputs:**
 - The predecessor spec and all 49 reverse-engineered specs under `specs/`.
 - The Claude Code plugin surface (plugin.json, .mcp.json, settings.json, hooks, commands, agents, skills).

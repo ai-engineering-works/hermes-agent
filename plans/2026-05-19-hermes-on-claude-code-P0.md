@@ -1,6 +1,19 @@
 # Hermes-on-Claude-Code — Phase 0 Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> ⚠️ **PARTIALLY EXECUTED + REORIENTED — 2026-05-19.** Tasks T1–T11 were implemented on branch `feat/claude-code-plugin-p0` (commits `ccc91f8c1`..`404752751`) and **remain valid**: they ship the plugin scaffold + 8 MCP server stubs + 11 hook stubs + composition README + subagent definitions + skills symlink. Under the *active* design spec (`specs/2026-05-18-convert-hermes-to-claude-code-sdk.md`), this work maps to **Phase 2** ("mirror Hermes tools as MCP servers consumable by any SDK-based agent").
+>
+> Tasks **T12–T21 are RETRACTED** because they were oriented around the aggressive "Claude Code is the brain, drop multi-provider" variant in the now-SUPERSEDED `specs/2026-05-19-hermes-on-claude-code-design.md`. Specifically retracted:
+> - T12 (slash-command export) — premature; plugin distribution decision deferred
+> - T13 (`hermes_launcher.sh` exec'ing `claude`) — wrong premise (Hermes keeps its own CLI)
+> - T14 (live plugin smoke test) — useful eventually, deferred
+> - T15–T18 (Q3/Q4/Q5/Q7 assumption verifications) — those assumptions only matter if Hermes' loop is replaced by Claude Code's; in the active design Hermes' loop survives, so the assumptions are non-load-bearing
+> - T19 (verify_p0/run_all.py driver) — unneeded without T15–T18
+> - T20 (packaging + regression sweep) — preserved as a separate TODO before merging the branch
+> - T21 (P0_RESULTS.md) — unneeded
+>
+> **The new active plan is** `plans/2026-05-19-hermes-on-claude-code-P1-sdk-transport.md` — predecessor-spec Phase 1: `agent/transports/claude_agent_sdk.py` as one more transport. Keep reading this document only for the file-level details on what T1–T11 produced; new work starts in the P1 plan.
+
+---
 
 **Goal:** Land the Hermes Claude Code plugin scaffold and verify the four assumptions Q3/Q4/Q5/Q7 of the spec rest on, so P1–P6 can proceed without rework.
 
@@ -8,7 +21,7 @@
 
 **Tech Stack:** Python 3.11, `claude-agent-sdk` (Python) for MCP server skeletons, `pytest` via `scripts/run_tests.sh`, Claude Code CLI v2.1.143 (pinned for P0; bumped deliberately later).
 
-**Spec reference:** `specs/2026-05-19-hermes-on-claude-code-design.md` §2.1, §2.2, §6 P0, §7 Q3/Q4/Q5/Q7.
+**Spec reference (HISTORICAL):** `specs/2026-05-19-hermes-on-claude-code-design.md` §2.1, §2.2, §6 P0, §7 Q3/Q4/Q5/Q7 — note that spec is now SUPERSEDED; the surviving relevance is the MCP server scaffold layout in §2.1 of that spec, which matches what T5–T6 implemented.
 
 ---
 
