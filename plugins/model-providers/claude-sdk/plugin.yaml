@@ -1,0 +1,5 @@
+name: claude-sdk
+kind: model-provider
+version: 1.0.0
+description: "Anthropic via Claude Agent SDK transport (Phase 1: behavior-parity with native Anthropic; future phases enable SDK-headless-mode agent loop)."
+author: Nous Research
