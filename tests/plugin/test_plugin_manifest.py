@@ -108,3 +108,21 @@ def test_settings_registers_eleven_hooks():
     }
     seen = {Path(p).name for p in hook_paths}
     assert seen == expected_scripts, f"hook set mismatch: {seen ^ expected_scripts}"
+
+
+AGENTS_DIR = PLUGIN_DIR / "agents"
+
+
+def test_agents_dir_has_orchestrator_and_leaf():
+    assert (AGENTS_DIR / "orchestrator.md").exists()
+    assert (AGENTS_DIR / "leaf.md").exists()
+
+
+@pytest.mark.parametrize("name", ["orchestrator", "leaf"])
+def test_agent_has_frontmatter(name):
+    text = (AGENTS_DIR / f"{name}.md").read_text()
+    assert text.startswith("---\n"), f"{name}.md missing YAML frontmatter"
+    fm_end = text.index("---\n", 4)
+    fm = text[4:fm_end]
+    assert "name:" in fm
+    assert "description:" in fm
