@@ -81,3 +81,30 @@ def test_mcp_reg_each_server_has_command_or_url():
     reg = _load_mcp()["mcpServers"]
     for name, cfg in reg.items():
         assert "command" in cfg or "url" in cfg, f"{name} has neither command nor url"
+
+
+SETTINGS = PLUGIN_DIR / "settings.json"
+
+
+def _load_settings() -> dict:
+    return json.loads(SETTINGS.read_text())
+
+
+def test_settings_exists():
+    assert SETTINGS.exists()
+
+
+def test_settings_registers_eleven_hooks():
+    s = _load_settings()
+    hook_paths = []
+    for event_hooks in s.get("hooks", {}).values():
+        for matcher_block in event_hooks:
+            for h in matcher_block.get("hooks", []):
+                hook_paths.append(h["command"])
+    expected_scripts = {
+        "tirith_approval.py", "osv_check.py", "env_scrub.py", "url_safety.py",
+        "skills_guard.py", "subagent_depth.py", "subagent_concurrency.py",
+        "redact.py", "bootstrap.py", "telemetry.py", "session_index.py",
+    }
+    seen = {Path(p).name for p in hook_paths}
+    assert seen == expected_scripts, f"hook set mismatch: {seen ^ expected_scripts}"
