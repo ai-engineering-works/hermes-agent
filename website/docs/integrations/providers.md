@@ -198,6 +198,21 @@ model:
 `--provider claude` and `--provider claude-code` also work as shorthand for `--provider anthropic`.
 :::
 
+### `claude-sdk` — Alpha
+
+`provider: claude-sdk` routes Anthropic traffic through Hermes' `ClaudeAgentSdkTransport` instead of the native `AnthropicTransport`. As of Phase 1 (2026-05-19), the two transports are behaviorally identical — same Anthropic Messages API, same wire format, same response shape. The separate transport exists so that future phases can swap the underlying agent-loop semantics on the Anthropic path (running the Claude Agent SDK's headless agent loop with Hermes' tools registered as MCP servers) without disturbing the native transport. Treat `claude-sdk` as opt-in alpha until that Phase 4 work lands.
+
+Configuration:
+
+```yaml
+# ~/.hermes/config.yaml
+model:
+  provider: claude-sdk
+  model: claude-sonnet-4-6
+```
+
+Environment variables: same as native Anthropic (`ANTHROPIC_API_KEY` / `ANTHROPIC_TOKEN` / `CLAUDE_CODE_OAUTH_TOKEN`).
+
 ### GitHub Copilot
 
 Hermes supports GitHub Copilot as a first-class provider with two modes:
