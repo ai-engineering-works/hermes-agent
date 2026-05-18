@@ -1,10 +1,10 @@
-"""hermes-memory MCP server — P0 stub.
+"""hermes-aux MCP server — P0 stub.
 
 Real implementation lands in P1.
 """
 from plugins.hermes.mcp._stub import make_stub_server, stub_main
 
-server = make_stub_server("memory")
+server = make_stub_server("aux")
 
 
 def main() -> None:
