@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "hermes-memory":   {"command": "python", "args": ["-m", "plugins.hermes.mcp.memory.server"]},
+    "hermes-terminal": {"command": "python", "args": ["-m", "plugins.hermes.mcp.terminal.server"]},
+    "hermes-recall":   {"command": "python", "args": ["-m", "plugins.hermes.mcp.recall.server"]},
+    "hermes-browser":  {"command": "python", "args": ["-m", "plugins.hermes.mcp.browser.server"]},
+    "hermes-aux":      {"command": "python", "args": ["-m", "plugins.hermes.mcp.aux.server"]},
+    "hermes-cron":     {"command": "python", "args": ["-m", "plugins.hermes.mcp.cron.server"]},
+    "hermes-kanban":   {"command": "python", "args": ["-m", "plugins.hermes.mcp.kanban.server"]},
+    "hermes-curator":  {"command": "python", "args": ["-m", "plugins.hermes.mcp.curator.server"]}
+  }
+}

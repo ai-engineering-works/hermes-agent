@@ -51,3 +51,33 @@ def test_manifest_declares_mcp_servers_array():
         "hermes-memory", "hermes-terminal", "hermes-recall", "hermes-browser",
         "hermes-aux", "hermes-cron", "hermes-kanban", "hermes-curator",
     }
+
+
+MCP_REG = PLUGIN_DIR / ".mcp.json"
+
+
+def _load_mcp() -> dict:
+    return json.loads(MCP_REG.read_text())
+
+
+def test_mcp_reg_exists():
+    assert MCP_REG.exists(), f"missing {MCP_REG}"
+
+
+def test_mcp_reg_is_valid_json():
+    _load_mcp()
+
+
+def test_mcp_reg_has_all_eight_servers():
+    reg = _load_mcp()["mcpServers"]
+    expected = {
+        "hermes-memory", "hermes-terminal", "hermes-recall", "hermes-browser",
+        "hermes-aux", "hermes-cron", "hermes-kanban", "hermes-curator",
+    }
+    assert set(reg.keys()) == expected
+
+
+def test_mcp_reg_each_server_has_command_or_url():
+    reg = _load_mcp()["mcpServers"]
+    for name, cfg in reg.items():
+        assert "command" in cfg or "url" in cfg, f"{name} has neither command nor url"
