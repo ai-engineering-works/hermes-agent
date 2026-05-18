@@ -126,3 +126,13 @@ def test_agent_has_frontmatter(name):
     fm = text[4:fm_end]
     assert "name:" in fm
     assert "description:" in fm
+
+
+SKILLS_LINK = PLUGIN_DIR / "skills"
+
+
+def test_skills_is_symlink_to_repo_skills():
+    assert SKILLS_LINK.is_symlink(), "plugins/hermes/skills must be a symlink during P0"
+    target = SKILLS_LINK.resolve()
+    expected = (REPO_ROOT / "skills").resolve()
+    assert target == expected, f"skills symlink target {target} != {expected}"
