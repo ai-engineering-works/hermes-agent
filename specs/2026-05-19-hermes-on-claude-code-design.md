@@ -90,10 +90,12 @@ Each MCP server is a thin Python module that imports existing Hermes Python code
 | `PreToolUse` (Bash env) | `env_scrub.py` | `tools/env_passthrough.py` (blocks `ANTHROPIC_TOKEN`, provider API keys, etc.) |
 | `PreToolUse` (WebFetch) | `url_safety.py` | `tools/url_safety.py` + `tools/website_policy.py` |
 | `PreToolUse` (Write/Edit on `**/SKILL.md`) | `skills_guard.py` | `tools/skills_guard.py` |
+| `PreToolUse` (Task) | `subagent_depth.py` | enforces `delegation.max_spawn_depth` via `HERMES_SUBAGENT_DEPTH` env counter (see §7 Q5) |
+| `PreToolUse` (Task) | `subagent_concurrency.py` | enforces `delegation.max_concurrent_children` via lockfile at `$HERMES_HOME/run/subagent_concurrency.lock` (see §7 Q5) |
 | `UserPromptSubmit` | `redact.py` | `agent/redact.py` + scrub PII |
-| `SessionStart` | `bootstrap.py` | personality load + memory snapshot + `tools/lazy_deps.py` |
-| `PostToolUse` | `telemetry.py` | writes per-turn cost / tokens / latency to insights SQLite |
-| `Stop` | `session_index.py` | writes session summary to FTS5 index for cross-session recall |
+| `SessionStart` | `bootstrap.py` | regenerates `$HERMES_HOME/.claude/settings.json` from `config.yaml` (see §7 Q4); loads personality + memory snapshot; runs `tools/lazy_deps.py`; reads pending `$HERMES_HOME/run/background_procs/*.completion.json` and appends to system prompt (see §7 Q7 interactive path) |
+| `PostToolUse` | `telemetry.py` | writes per-turn cost / tokens / latency to insights SQLite; incremental turn-row write to `recall.db` (see §7 Q3) |
+| `Stop` | `session_index.py` | writes full transcript snapshot to `recall.db` (post-compact state captured here; see §7 Q3) |
 
 Composition rule: hooks fire in `hooks/README.md`-documented order. PreToolUse hooks short-circuit on `deny`; an explicit `allow` from any one hook does NOT bypass the others — every hook must allow. This matches the existing Hermes invariant that approval, Tirith, and dangerous-pattern checks all gate independently.
 
@@ -130,7 +132,10 @@ A new `gateway/claude_session_manager.py` owns:
 - subprocess lifecycle (spawn, resume by `--session-id`, cancel via SIGTERM to process group),
 - stream-json parsing into `gateway_adapter` events,
 - approval fifo (when `HERMES_GATEWAY_APPROVAL_FIFO` is set, the `tirith_approval` hook writes the approval request to the fifo and waits with the existing 300-second `threading.Event` semantics; the gateway runner reads the fifo, posts an approval prompt on the platform, parses `/approve` / `/deny`, writes the answer back),
-- crash recovery (stderr captured, surfaced to platform, chat-session-map row marked stale so the next message starts fresh).
+- crash recovery (stderr captured, surfaced to platform, chat-session-map row marked stale so the next message starts fresh),
+- background notify socket (see §7 Q7 — `gateway/notify_listener.py` listens on `$HERMES_HOME/run/gateway_notify.sock`; on completion events it spawns a new `claude` subprocess with a synthesized message and the originating chat's `session_id`).
+
+The spawn env additionally carries `HERMES_GATEWAY_NOTIFY_SOCK` and `CLAUDE_HOME=$HERMES_HOME/.claude` (see §7 Q4 — profile-scoped Claude Code state).
 
 `hermes_state.SessionDB` shrinks to a single table: `(platform, chat_id, thread_id) → claude_session_id`. The full message-history columns and FTS5 transcript index move to the `hermes-recall` MCP server.
 
@@ -253,6 +258,9 @@ gateway/claude_session_manager.py spawns or resumes:
           --output-format stream-json --cwd <terminal.cwd>
           --env HERMES_PLATFORM=telegram HERMES_CHAT_ID=…
                 HERMES_GATEWAY_APPROVAL_FIFO=/tmp/hermes-approval-<pid>
+                HERMES_GATEWAY_NOTIFY_SOCK=$HERMES_HOME/run/gateway_notify.sock
+                HERMES_SUBAGENT_DEPTH=0
+                CLAUDE_HOME=$HERMES_HOME/.claude
    ↓
 Claude Code runs the full plugin pipeline (same as interactive)
    ↓
@@ -326,7 +334,11 @@ Failures that no longer exist on this path: provider failover (no other provider
 | Cron + kanban runners | End-to-end job run under the new subprocess shape — 3-minute hard interrupt fires; kanban worker MCP gating works | `tests/cron/test_cron_under_claude.py`, `tests/kanban/test_worker_under_claude.py` |
 | Plugin install | Plugin loads in a vanilla `claude` session, MCP servers come up, skills / commands / agents visible | `tests/plugin/test_plugin_smoke.py` |
 | Memory bridge | `/remember` slash command writes to the active provider (Honcho / mem0 / …); `mcp__hermes_memory__*` reads round-trip | `tests/mcp/test_memory_bridge.py` |
-| Recall bridge | FTS5 search returns historical turns; telemetry hook writes per-turn rows | `tests/mcp/test_recall_bridge.py` |
+| Recall bridge | FTS5 search returns historical turns; `PostToolUse` writes incremental turn rows; `Stop` writes full transcript snapshot; pre-compact and post-compact transcripts both retrievable (§7 Q3) | `tests/mcp/test_recall_bridge.py` |
+| Settings.json generator | `bootstrap.py` writes the expected JSON from `config.yaml`; manual edits to `settings.json` are clobbered on next session; profile-scoped paths honored (§7 Q4) | `tests/hooks/test_bootstrap_settings.py` |
+| Subagent depth + concurrency | `subagent_depth.py` and `subagent_concurrency.py` deny at the configured limits; HERMES_SUBAGENT_DEPTH env propagates correctly; orchestrator role gating works (§7 Q5) | `tests/hooks/test_subagent_gates.py` |
+| Background notify (gateway) | Background process completion writes to notify socket; gateway listener synthesizes a new turn; originating chat receives the completion message via the platform adapter with `source=background_watcher` (§7 Q7) | `tests/gateway/test_notify_listener.py` |
+| Background notify (interactive) | `bootstrap.py` reads pending `*.completion.json`, injects into system prompt, deletes files after consumption (§7 Q7) | `tests/hooks/test_bootstrap_background_completion.py` |
 | Security invariants | Every invariant from existing security specs — Tirith content scan, approval hardline + dangerous patterns, OSV malware block, URL safety SSRF block, skill content scan, env scrub — holds via hook composition | `tests/hooks/test_security_invariants.py` |
 
 ### 5.2 Deletions
@@ -339,10 +351,10 @@ Every test that exercises the in-house agent loop, provider transports, context_
 
 | Phase | Goal | Ships when |
 |---|---|---|
-| **P0 — Plugin scaffold** | `plugins/hermes/plugin.json`, `.mcp.json`, empty MCP server stubs, hooks stubs, port existing `skills/` and slash commands into the plugin layout. The `hermes` launcher (`exec claude --plugin hermes`) lands but the in-process AIAgent is still the default. | Vanilla `claude --plugin hermes` starts and lists Hermes' skills, commands, subagents. No behavior change for existing users. |
-| **P1 — Hermes-unique MCP servers** | Implement `hermes-memory`, `hermes-terminal`, `hermes-recall`, `hermes-browser`, `hermes-aux`, `hermes-cron`, `hermes-kanban`, `hermes-curator`. Each is a shim over existing Python code. | All eight MCP servers pass parity tests against their legacy Python counterparts. A vanilla `claude --plugin hermes` session can use every Hermes-unique capability. |
-| **P2 — Hooks port** | Port `tirith_security`, `approval`, `url_safety`, `osv_check`, `skills_guard`, `env_passthrough`, `redact`, `website_policy`, telemetry writer, session_index writer into hook scripts. `plugins/hermes/hooks/README.md` documents composition. | Hook composition tests pass; every safety invariant test from existing security specs passes on the plugin path. |
-| **P3 — Gateway swap** | `gateway/run.py` replaces in-process `AIAgent` with `gateway/claude_session_manager.py` spawning the CLI subprocess. `SessionDB` schema migration to the trimmed map. Approval fifo bridge. Per-platform smoke regression. | All 12+ platforms pass smoke tests on the new path; `hermes gateway start` no longer imports `run_agent`. Existing Telegram bots configured today continue to work without user re-setup. |
+| **P0 — Plugin scaffold + verify Claude Code assumptions** | `plugins/hermes/plugin.json`, `.mcp.json`, empty MCP server stubs, hooks stubs, port existing `skills/` and slash commands into the plugin layout. The `hermes` launcher (`exec claude --plugin hermes`) lands but the in-process AIAgent is still the default. **Also: pin Claude Code version and verify the four assumptions Q3/Q4/Q5/Q7 rest on** — Stop hook stdin payload contains transcript (Q3); env var or flag controls Claude Code state root (Q4); Task tool supports child env propagation (Q5); plugin can long-poll a Unix socket without being killed by hook timeouts (Q7). If any assumption fails, the spec is amended before P1 starts. | Vanilla `claude --plugin hermes` starts and lists Hermes' skills, commands, subagents. No behavior change for existing users. Q3/Q4/Q5/Q7 assumption-verification scripts pass against the pinned Claude Code version. |
+| **P1 — Hermes-unique MCP servers + recall schema** | Implement `hermes-memory`, `hermes-terminal`, `hermes-recall`, `hermes-browser`, `hermes-aux`, `hermes-cron`, `hermes-kanban`, `hermes-curator`. Each is a shim over existing Python code. `hermes-recall` lands the `recall.db` schema from §7 Q3. `hermes-terminal` lands the background process registry and `*.completion.json` write path from §7 Q7. | All eight MCP servers pass parity tests against their legacy Python counterparts. A vanilla `claude --plugin hermes` session can use every Hermes-unique capability. |
+| **P2 — Hooks port + Q3/Q4/Q5/Q7 enforcement** | Port `tirith_security`, `approval`, `url_safety`, `osv_check`, `skills_guard`, `env_passthrough`, `redact`, `website_policy`, telemetry writer, session_index writer into hook scripts. Add the four resolved-question hooks: `subagent_depth.py`, `subagent_concurrency.py` (Q5), `bootstrap.py` settings.json regen (Q4), `bootstrap.py` background-completion reader (Q7 interactive), `session_index.py` recall.db writer (Q3). `plugins/hermes/hooks/README.md` documents composition. | Hook composition tests pass; every safety invariant test from existing security specs passes on the plugin path; the four Q3/Q4/Q5/Q7 test surfaces in §5.1 all pass. |
+| **P3 — Gateway swap** | `gateway/run.py` replaces in-process `AIAgent` with `gateway/claude_session_manager.py` spawning the CLI subprocess. `SessionDB` schema migration to the trimmed map. Approval fifo bridge. **`gateway/notify_listener.py` lands the Unix-socket listener and synthesized-turn dispatch from §7 Q7 gateway path.** Per-platform smoke regression. | All 12+ platforms pass smoke tests on the new path; `hermes gateway start` no longer imports `run_agent`; background-process completion delivers a synthesized turn end-to-end through a real platform. Existing Telegram bots configured today continue to work without user re-setup. |
 | **P4 — CLI collapse** | The `hermes` CLI becomes `exec claude --plugin hermes` for interactive; admin verbs (`gateway`, `setup`, `cron`, `kanban`, `curator`, `tools`, `skills`, `update`, `doctor`, `claw migrate`) remain as thin operations on plugin internals. Delete `cli.py` HermesCLI, `ui-tui/`, `tui_gateway/`, `acp_adapter/`, `agent/skill_commands.py`, `hermes_cli/skin_engine.py`. | Interactive `hermes` matches Claude Code feature-parity; admin verbs unchanged in behavior. |
 | **P5 — Bulk deletion** | Delete every file listed in §2.4: `run_agent.py`, `model_tools.py`, `toolsets.py`, `batch_runner.py`, `trajectory_compressor.py`, `mcp_serve.py`, `mini_swe_runner.py`, all `agent/transports/*`, all `agent/provider_adapters/*`, all `plugins/model-providers/*`, all redundant `tools/*`, `agent/context_handling.py`, `agent/error_handling.py`, `agent/prompt_builder.py`, `agent/memory_manager.py` orchestrator. Delete corresponding tests. | LOC reduction targets in §2.6 met; test suite green on the reduced surface; one full release-cycle dogfood on the main author's daily setup. |
 | **P6 — Polish & publish** | `settings.json` generator from `config.yaml` (Hermes config remains the single source of truth, generates Claude Code settings on plugin load); plugin marketplace publishing; docs site rewrite; `hermes claw migrate` adds the claude-code-migration path so OpenClaw users land on the new shape. | Marketplace listing live; users can `claude plugin install hermes` against a registry. |
@@ -351,20 +363,80 @@ Each phase is shippable. If any phase reveals a blocker (MCP performance, Claude
 
 ---
 
-## §7 — Open questions
+## §7 — Resolved load-bearing decisions
 
-These are the calls I cannot make without more input — they should be answered before the implementation plan locks them in.
+These four were the load-bearing ones that determine whether data flow, delegation, and background work actually function. Resolved decisions below; cross-references back into the relevant component sections.
+
+### Q3 (resolved) — Hermes-recall vs Claude Code's own session DB
+
+**Decision.** Claude Code's session DB is opaque to Hermes — we never read from it, never write to it, never inspect its schema. Hermes-recall keeps its own SQLite store at `~/.hermes/recall.db` (profile-scoped via `get_hermes_home()`). The bridge is one-way: the `Stop` hook (and a `PostToolUse` hook for incremental indexing on long sessions) captures the transcript state Claude Code has accumulated and writes it to recall.db. The transcript snapshot is read from the hook's stdin payload, which Claude Code provides per Stop / PostToolUse contract — not from Claude Code's session file.
+
+**Compact rewrites.** When the user invokes `/compact`, Claude Code rewrites the session's in-memory transcript. The next `Stop` hook fires *after* compact — recall.db gets the post-compact transcript. The pre-compact full transcript was already captured by earlier `Stop` / `PostToolUse` firings (one per turn boundary), so recall.db has both: the full pre-compact turns *and* the post-compact summary. We treat recall.db as the archival store of record; Claude Code's session DB is treated as the live working set that can be re-compacted at any time.
+
+**Schema.** `recall.db` has tables: `sessions(session_id, platform, chat_id, started_at, ended_at)`, `turns(session_id, turn_idx, role, content_md, content_json, ts)`, `turns_fts(content_md)` (FTS5 virtual table), `tool_calls(session_id, turn_idx, tool_name, args_json, result_json, latency_ms, ts)`. Indexes on `(platform, chat_id)` and `(ts)`.
+
+**Cross-reference.** This determines the schema for `mcp/recall/server.py` (§2.1) and the `Stop` + `PostToolUse` hook contracts (§2.2). Updates the §3 data-flow lines that mention "Stop hook indexes session transcript for FTS5 recall."
+
+### Q4 (resolved) — Settings direction and scope
+
+**Decision.** `~/.hermes/config.yaml` is the single source of truth. **Hermes generates Claude Code settings on every session start; the reverse direction is unsupported and manual edits to the generated settings file are clobbered.**
+
+**Mechanism.** The `bootstrap.py` SessionStart hook reads `config.yaml`, materializes the equivalent Claude Code settings JSON to a *profile-scoped* path (so two Hermes profiles don't trample each other's Claude Code settings), and points Claude Code at it. Specifically:
+- Hermes invokes Claude Code with `CLAUDE_HOME=$HERMES_HOME/.claude` in the spawn env (or whatever env var Claude Code reads for its settings root — to be pinned in P0 against the version we target).
+- The bootstrap hook regenerates `$HERMES_HOME/.claude/settings.json` from `config.yaml` at every SessionStart, after `_apply_profile_override()` has resolved the active profile.
+- The generated settings.json is owned by Hermes; it carries a comment header `# generated from ~/.hermes/config.yaml; edits will be overwritten` and an explicit `_hermes_generated_at` timestamp field for diagnostic clarity.
+- A `hermes doctor` check verifies the generated file matches what `config.yaml` would produce; any divergence is flagged.
+
+**What is NOT generated.** Claude Code's own state (session history, auth tokens, skill cache) lives in `$HERMES_HOME/.claude/` and is preserved across sessions. Only `settings.json` is regenerated.
+
+**Profile isolation.** Profile-scoped already works for Hermes (`get_hermes_home()` returns `~/.hermes/profiles/<name>` for profiles). Setting `CLAUDE_HOME` to the same root extends profile isolation to Claude Code state automatically. No new profile mechanism is needed.
+
+**Cross-reference.** This determines the `bootstrap.py` SessionStart hook implementation (§2.2) and the P6 settings.json generator (§6). Updates §11's "Profile system (...)" stays-unchanged entry.
+
+### Q5 (resolved) — Subagent depth
+
+**Decision.** Hermes' `delegation.max_spawn_depth` (default 2) is enforced via a `PreToolUse` hook on the `Task` tool. Claude Code's built-in subagent depth limit is set to `>= delegation.max_spawn_depth` via the generated settings.json (so Claude Code's limit is the outer envelope; Hermes' limit is the inner enforcement). The Hermes hook is the authoritative cap.
+
+**Mechanism.**
+- Every Hermes session and subagent carries `HERMES_SUBAGENT_DEPTH` in its env (root session: `0`).
+- The `Task` `PreToolUse` hook (`subagent_depth.py`, added to the hooks list in §2.2) reads `HERMES_SUBAGENT_DEPTH` from the parent process env. If `HERMES_SUBAGENT_DEPTH + 1 > delegation.max_spawn_depth`, the hook denies.
+- On allow, the hook sets the child env's `HERMES_SUBAGENT_DEPTH = parent + 1`. (Claude Code's Task tool supports passing env to subagents per its plugin contract — to be pinned in P0.)
+- `delegation.orchestrator_enabled` is enforced by the same hook: if `false`, only role=`leaf` subagents are allowed regardless of depth.
+- `delegation.max_concurrent_children` is enforced by a *separate* `PreToolUse` hook on `Task` (`subagent_concurrency.py`) that maintains a process-group concurrency counter in a lockfile at `$HERMES_HOME/run/subagent_concurrency.lock`. Concurrency is per-root-session, matching today's behavior.
+
+**Cross-reference.** This adds two hooks to the §2.2 table (`subagent_depth.py`, `subagent_concurrency.py`). Updates the P2 deliverable to include subagent enforcement hooks. Removes the implied need for `agents/orchestrator.md` to encode depth limits (the hook is the gate).
+
+### Q7 (resolved) — Background process notification flow
+
+**Decision.** `hermes-terminal` MCP keeps the background process registry. When a process completes, the MCP server writes a completion event to a **gateway notify socket** (Unix domain socket on POSIX; named pipe on Windows). The gateway runner reads the notify event, synthesizes a user-shaped message, and spawns a new `claude` subprocess with that synthesized message + the originating chat's `session_id`. This preserves "new turn on background completion" for gateway users.
+
+**Interactive mode degrades gracefully.** In interactive (terminal) mode there is no long-lived gateway watching the socket — Claude Code is the foreground process and exits between turns. Background completions accumulate in the hermes-terminal MCP's registry; the next user message naturally causes a new session-resume, and the SessionStart hook reads pending completions and injects them as system-message context ("3 background processes completed since last turn: ..."). The auto-notify-mid-conversation feature is gateway-only; the behavior degradation is documented in user-facing docs.
+
+**Mechanism (gateway path).**
+- `hermes-terminal` MCP's `exec(background=True)` registers the process in `$HERMES_HOME/run/background_procs/<proc_id>.json` and forks the watcher.
+- The watcher, on process exit, writes a completion event to the notify socket at `$HERMES_HOME/run/gateway_notify.sock` (path passed in via env var `HERMES_GATEWAY_NOTIFY_SOCK`, set by `gateway/claude_session_manager.py` when it spawns the subprocess).
+- Gateway runner has a notify-socket listener (`gateway/notify_listener.py`, new file) that reads completion events. For each event, it builds a synthesized message like `[Background process <proc_id> completed: exit_code=<n>, stdout_tail=<...>]` and dispatches it through the normal per-chat session spawn path (`claude_session_manager.spawn(...)` with the originating `session_id` and platform context).
+- The synthesized message is delivered with a special platform-event tag (`source=background_watcher`) so the gateway adapter can format it distinctly (e.g., a system-styled prefix on Telegram) instead of showing it as a user message echo.
+
+**Mechanism (interactive path).**
+- No notify socket. `hermes-terminal` MCP still writes completion events to `$HERMES_HOME/run/background_procs/<proc_id>.completion.json`.
+- `bootstrap.py` SessionStart hook reads any `*.completion.json` files newer than the last session's `Stop` timestamp and injects a summary into the prompt as additional system context (or via Claude Code's `--append-system-prompt` flag — pinned in P0).
+- The completion files are deleted by the hook after consumption.
+
+**Cross-reference.** This adds `gateway/notify_listener.py` to the gateway changes in §2.3, adds `bootstrap.py` behavior to §2.2, and adds a new ENV var (`HERMES_GATEWAY_NOTIFY_SOCK`) to the spawn env in §3.2. Adds tests `tests/gateway/test_notify_listener.py` and `tests/hooks/test_bootstrap_background_completion.py` to §5.1.
+
+---
+
+## §7a — Still-open questions
+
+These remain genuinely undecided and need answers before the implementation plan locks them in.
 
 1. **Plugin distribution channel.** Marketplace listing, vendored `.tgz`, or git submodule of the existing `hermes-agent` repo? Affects how users install Hermes and how Hermes ships updates.
 2. **Multi-modal payload in MCP.** Hermes' `_multimodal: True` tool-result shape (base64 image embedded in JSON) — confirm Claude Code accepts this from MCP tools as inline content.
-3. **Hermes-recall vs Claude Code's own session DB.** Claude Code has its own session storage; the FTS5 cross-session search is value-add but the two stores risk drift. Confirm we write transcripts to recall.db via the `Stop` hook (not via inspecting Claude's internal DB).
-4. **Settings.json scope.** Profile-scoped `~/.hermes/config.yaml` vs Claude Code's `~/.claude/settings.json` — confirm Hermes generates the latter from the former at plugin load, NOT the reverse.
-5. **Subagent depth.** Claude Code subagents have their own depth limits; reconcile with Hermes' `delegation.max_spawn_depth`.
-6. **Skill provenance during migration.** Existing skills under `~/.hermes/skills/` need migration paths to `~/.hermes/plugins/hermes/skills/`. Curator state (provenance, usage telemetry) — does it migrate or reset?
-7. **Background process notification flow.** Hermes' `terminal(background=True, notify_on_complete=True)` triggers a new agent turn from the gateway watcher. The CLI subprocess model needs an equivalent — confirm `hermes-terminal` MCP can emit an "unsolicited" event that the gateway translates into a new turn.
-8. **Approval fifo on Windows.** Named pipes work but the path conventions differ. Native Windows already early-beta; confirm the fifo design has a Windows variant.
-9. **MCP collision policy.** Claude Code exposes `Bash`; `hermes-terminal` exposes a different `mcp__hermes_terminal__exec`. Confirm naming convention prevents collision and the model's tool-selection prompt makes the difference clear.
-10. **Plugin marketplace authentication.** If Hermes ships through a marketplace, what's the publisher identity story? (Not blocking P0–P5.)
+3. **Skill provenance during migration.** Existing skills under `~/.hermes/skills/` need migration paths to `~/.hermes/plugins/hermes/skills/`. Curator state (provenance, usage telemetry) — does it migrate or reset?
+4. **Approval fifo on Windows.** Named pipes work but the path conventions differ. Native Windows already early-beta; confirm the fifo design has a Windows variant. (Applies to Q7's notify socket too — same Windows-portability gap.)
+5. **MCP collision policy.** Claude Code exposes `Bash`; `hermes-terminal` exposes a different `mcp__hermes_terminal__exec`. Confirm the model's tool-selection prompt makes the difference clear, or hide `Bash` via permission gating when the terminal target is non-local.
+6. **Plugin marketplace authentication.** If Hermes ships through a marketplace, what's the publisher identity story? (Not blocking P0–P5.)
 
 ---
 
