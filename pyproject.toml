@@ -225,7 +225,7 @@ markers = [
     "integration: marks tests requiring external services (API keys, Modal, etc.)",
     "live: requires a real API call or live external service",
 ]
-addopts = "-m 'not integration' -n auto"
+addopts = "-m 'not integration and not live' -n auto"
 
 [tool.ty.environment]
 python-version = "3.13"

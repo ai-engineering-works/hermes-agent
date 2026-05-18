@@ -1,6 +1,12 @@
-"""Each of the eight MCP server stubs exposes one placeholder tool."""
+"""Each of the eight MCP server stubs exposes one placeholder tool.
+
+Requires the ``claude-code`` extra (``pip install -e ".[claude-code]"``);
+the suite is skipped automatically when ``claude_agent_sdk`` is not installed.
+"""
 import importlib
 import pytest
+
+pytest.importorskip("claude_agent_sdk")
 
 SERVERS = [
     "memory", "terminal", "recall", "browser", "aux", "cron", "kanban", "curator",
