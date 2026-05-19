@@ -1,0 +1,37 @@
+{
+  "_hermes_generated_at": null,
+  "hooks": {
+    "PreToolUse": [
+      {"matcher": "Bash",     "hooks": [
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/tirith_approval.py"},
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/osv_check.py"},
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/env_scrub.py"}
+      ]},
+      {"matcher": "WebFetch", "hooks": [
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/url_safety.py"}
+      ]},
+      {"matcher": "Write",    "hooks": [
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/skills_guard.py"}
+      ]},
+      {"matcher": "Edit",     "hooks": [
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/skills_guard.py"}
+      ]},
+      {"matcher": "Task",     "hooks": [
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent_depth.py"},
+        {"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/subagent_concurrency.py"}
+      ]}
+    ],
+    "UserPromptSubmit": [
+      {"hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/redact.py"}]}
+    ],
+    "SessionStart": [
+      {"hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/bootstrap.py"}]}
+    ],
+    "PostToolUse": [
+      {"hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/telemetry.py"}]}
+    ],
+    "Stop": [
+      {"hooks": [{"type": "command", "command": "${CLAUDE_PLUGIN_ROOT}/hooks/session_index.py"}]}
+    ]
+  }
+}

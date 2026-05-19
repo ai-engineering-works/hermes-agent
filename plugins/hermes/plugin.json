@@ -1,0 +1,19 @@
+{
+  "name": "hermes",
+  "version": "0.14.0",
+  "description": "Hermes Agent surfaces (gateway, memory providers, remote terminals, cron, kanban, curator, browser, auxiliary side-LLM) as a Claude Code plugin.",
+  "author": "Nous Research",
+  "license": "MIT",
+  "homepage": "https://hermes-agent.nousresearch.com",
+  "mcpServers": [
+    "hermes-memory",
+    "hermes-terminal",
+    "hermes-recall",
+    "hermes-browser",
+    "hermes-aux",
+    "hermes-cron",
+    "hermes-kanban",
+    "hermes-curator"
+  ],
+  "_hermes_phase": "P0-scaffold"
+}

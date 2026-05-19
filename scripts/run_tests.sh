@@ -125,5 +125,5 @@ exec "$PYTHON" -m pytest \
   -n "$WORKERS" \
   --ignore=tests/integration \
   --ignore=tests/e2e \
-  -m "not integration" \
+  -m "not integration and not live" \
   "${ARGS[@]}"
